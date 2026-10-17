@@ -41,6 +41,19 @@ Horizontal pager with three pages, home always in the center:
 
 ## Building
 
+The build reads release signing values from a `key.properties` file in the project root
+(gitignored). Gradle fails on every task without it, debug builds included, so create one first:
+
+```properties
+storeFile=/absolute/path/to/your.jks
+storePassword=...
+keyAlias=...
+keyPassword=...
+```
+
+Any keystore works for local builds; generate one with
+`keytool -genkeypair -v -keystore your.jks -keyalg RSA -keysize 2048 -validity 10000 -alias your-alias`.
+
 ```bash
 ./gradlew assembleDebug
 ```
@@ -58,3 +71,9 @@ Then press the device Home button and pick Minimala.
 - `READ_CALENDAR` / `WRITE_CALENDAR` — for the calendar panel and quick event creation.
 - `EXPAND_STATUS_BAR` — swipe down on the home panel to reveal notifications/quick settings.
 - Accessibility service (optional, user-enabled) — double-tap to turn the screen off.
+
+## License
+
+Minimala is licensed under the [GNU General Public License v3.0](LICENSE) (`GPL-3.0-only`).
+Bundled fonts are under the SIL Open Font License 1.1; see
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
