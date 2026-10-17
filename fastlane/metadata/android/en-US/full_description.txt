@@ -1,0 +1,26 @@
+<p>Minimala is a minimalist home launcher. No icons, no widget grid, no clutter: three swipeable panels and a text-based app drawer.</p>
+
+<p><b>Layout</b></p>
+<ul>
+<li><b>Home</b>: clock, date, battery. Double-tap to turn the screen off, long-press for a quick-launch grid.</li>
+<li><b>Left panel</b>: upcoming calendar events, a Bikram Sambat (Nepali) calendar, and quick access to system settings.</li>
+<li><b>Right panel</b>: quick-add a calendar event and your favorite apps.</li>
+<li><b>App drawer</b>: swipe up from any panel. Mark apps as favorite or hidden, rename them, or open app info.</li>
+</ul>
+
+<p><b>Customization</b></p>
+<ul>
+<li>Six color palettes: Dark, Light, Dracula, Strawberry, Blueberry, Lemon.</li>
+<li>Five bundled fonts (Inter, JetBrains Mono, Outfit, Space Grotesk, Lora) plus the system font, with adjustable weight and size.</li>
+<li>Adjustable wallpaper dimming, from fully visible to fully hidden.</li>
+</ul>
+
+<p><b>Permissions</b></p>
+<ul>
+<li>Calendar (read/write): show upcoming events and create new ones.</li>
+<li>Physical activity: daily step count from the device's step sensor.</li>
+<li>Expand status bar: swipe down on home to open notifications.</li>
+<li>Accessibility service (optional, off by default): used only to turn the screen off on double-tap. Android offers launchers no other way to lock the screen. It reads no screen content.</li>
+</ul>
+
+<p>No network access, no analytics, no ads.</p>

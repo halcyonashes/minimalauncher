@@ -1,0 +1,1 @@
+Minimalist text-only launcher: three panels, calendar, themes, no icons

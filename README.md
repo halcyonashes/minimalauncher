@@ -41,21 +41,17 @@ Horizontal pager with three pages, home always in the center:
 
 ## Building
 
-The build reads release signing values from a `key.properties` file in the project root
-(gitignored). Gradle fails on every task without it, debug builds included, so create one first:
+```bash
+./gradlew assembleDebug
+```
+
+Release builds are unsigned unless a `key.properties` file (gitignored) exists in the project root:
 
 ```properties
 storeFile=/absolute/path/to/your.jks
 storePassword=...
 keyAlias=...
 keyPassword=...
-```
-
-Any keystore works for local builds; generate one with
-`keytool -genkeypair -v -keystore your.jks -keyalg RSA -keysize 2048 -validity 10000 -alias your-alias`.
-
-```bash
-./gradlew assembleDebug
 ```
 
 Install and set as default launcher:
