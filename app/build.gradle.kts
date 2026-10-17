@@ -15,11 +15,11 @@ val keystoreProperties = Properties().apply {
 }
 
 android {
-    namespace = "com.aegwyn.minimala"
+    namespace = "io.github.halcyonashes.minimala"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.aegwyn.minimala"
+        applicationId = "io.github.halcyonashes.minimala"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
