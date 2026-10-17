@@ -8,10 +8,11 @@ no widgets grid, no clutter.
 
 Horizontal pager with three pages, home always in the center:
 
-- **Left panel** — upcoming calendar events, quick access to system settings.
+- **Left panel** — shortcuts (wallpaper, Minimala settings, system settings), a month calendar in
+  Anno Domini or Bikram Sambat (chosen in settings), daily step count, pinned apps.
 - **Home panel** — clock, date, battery, double-tap to lock the screen (via accessibility
   service), long-press for a quick-launch grid.
-- **Right panel** — quick add for a calendar event, favorite apps list.
+- **Right panel** — today's date, quick add for a calendar event, upcoming events, frequent apps.
 - **App drawer** — dragged up from any panel as an overlay (not a fourth page), with
   favorite/frequent/hidden toggles, rename, and app info shortcuts per app.
 

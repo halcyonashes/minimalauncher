@@ -3,8 +3,8 @@
 <p><b>Layout</b></p>
 <ul>
 <li><b>Home</b>: clock, date, battery. Double-tap to turn the screen off, long-press for a quick-launch grid.</li>
-<li><b>Left panel</b>: upcoming calendar events, a month calendar in Anno Domini or Bikram Sambat (Nepali), chosen in settings, and quick access to system settings.</li>
-<li><b>Right panel</b>: quick-add a calendar event and your favorite apps.</li>
+<li><b>Left panel</b>: shortcuts (wallpaper, Minimala settings, system settings), a month calendar in Anno Domini or Bikram Sambat (Nepali), chosen in settings, your daily step count, and pinned apps.</li>
+<li><b>Right panel</b>: today's date, quick-add a calendar event, upcoming events dated in the chosen calendar, and your most frequently used apps.</li>
 <li><b>App drawer</b>: swipe up from any panel. Mark apps as favorite or hidden, rename them, or open app info.</li>
 </ul>
 
