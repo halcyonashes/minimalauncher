@@ -14,7 +14,10 @@ import io.github.halcyonashes.minimala.core.settings.DateStyle
 import io.github.halcyonashes.minimala.core.settings.FontWeightOption
 import io.github.halcyonashes.minimala.core.settings.LauncherSettings
 import io.github.halcyonashes.minimala.core.settings.SettingsRepository
+import java.time.LocalDate
+import java.time.ZoneId
 import java.util.Calendar
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -38,6 +41,8 @@ data class LauncherUiState(
     val favorites: List<AppEntry> = emptyList(),
     val frequentApps: List<AppEntry> = emptyList(),
     val weekEvents: List<CalendarEvent> = emptyList(),
+    /** Events for the week the user tapped on the left panel's month grid. */
+    val selectedWeekEvents: List<CalendarEvent> = emptyList(),
     val stepsToday: Int = 0,
 )
 
@@ -52,13 +57,16 @@ class LauncherViewModel(
 ) : ViewModel() {
 
     private val _weekEvents = MutableStateFlow<List<CalendarEvent>>(emptyList())
+    private val _selectedWeekEvents = MutableStateFlow<List<CalendarEvent>>(emptyList())
+    private var selectedWeekJob: Job? = null
 
     val uiState: StateFlow<LauncherUiState> = combine(
         settingsRepository.settings,
         appRepository.apps,
         _weekEvents,
+        _selectedWeekEvents,
         stepCounterRepository.stepsToday(),
-    ) { settings, apps, events, steps ->
+    ) { settings, apps, events, selectedWeekEvents, steps ->
         val byKey = apps.associateBy { it.key }
         LauncherUiState(
             settings = settings,
@@ -67,6 +75,7 @@ class LauncherViewModel(
             favorites = settings.favoritePackageKeys.mapNotNull(byKey::get),
             frequentApps = settings.frequentAppKeys.mapNotNull(byKey::get),
             weekEvents = events,
+            selectedWeekEvents = selectedWeekEvents,
             stepsToday = steps,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LauncherUiState())
@@ -80,6 +89,27 @@ class LauncherViewModel(
             val end = start + DaysInWeek * MinutesPerDay * 60 * 1000L
             _weekEvents.value = calendarRepository.eventsBetween(start, end)
         }
+    }
+
+    /**
+     * [weekStart] is chosen by the caller because only the grid knows its own first weekday.
+     * The previous fetch is cancelled so a slow query for an older tap can't land last and
+     * overwrite the week the user is actually looking at.
+     */
+    fun loadWeekEvents(weekStart: LocalDate) {
+        selectedWeekJob?.cancel()
+        selectedWeekJob = viewModelScope.launch {
+            val zone = ZoneId.systemDefault()
+            // Day arithmetic in LocalDate, not +7×24h millis: a DST week is not 168 hours.
+            val start = weekStart.atStartOfDay(zone).toInstant().toEpochMilli()
+            val end = weekStart.plusDays(DaysInWeek.toLong()).atStartOfDay(zone).toInstant().toEpochMilli()
+            _selectedWeekEvents.value = calendarRepository.eventsBetween(start, end)
+        }
+    }
+
+    fun clearSelectedWeek() {
+        selectedWeekJob?.cancel()
+        _selectedWeekEvents.value = emptyList()
     }
 
     fun launchApp(entry: AppEntry) = appRepository.launch(entry)
@@ -133,6 +163,7 @@ class LauncherViewModel(
     fun setClockStyle(style: ClockStyle) = updateSettings { it.copy(clockStyle = style) }
     fun setDateStyle(style: DateStyle) = updateSettings { it.copy(dateStyle = style) }
     fun setCalendarSystem(system: CalendarSystem) = updateSettings { it.copy(calendarSystem = system) }
+    fun setScratchPad(text: String) = updateSettings { it.copy(scratchPad = text) }
 
     /** 0 = wallpaper fully visible, 1 = wallpaper fully covered by the palette background. */
     fun setBackgroundOpacity(opacity: Float) =

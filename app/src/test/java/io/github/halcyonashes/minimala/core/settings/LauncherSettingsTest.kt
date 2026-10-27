@@ -27,4 +27,16 @@ class LauncherSettingsTest {
         val settings = LauncherSettings(calendarSystem = CalendarSystem.BS)
         assertEquals(settings, json.decodeFromString<LauncherSettings>(json.encodeToString(settings)))
     }
+
+    @Test
+    fun `blob stored before the scratch pad existed decodes with an empty note`() {
+        val decoded = json.decodeFromString<LauncherSettings>("""{"paletteId":"light"}""")
+        assertEquals("", decoded.scratchPad)
+    }
+
+    @Test
+    fun `multi-line scratch pad survives a round trip`() {
+        val settings = LauncherSettings(scratchPad = "milk\n\"eggs\"\n")
+        assertEquals(settings, json.decodeFromString<LauncherSettings>(json.encodeToString(settings)))
+    }
 }

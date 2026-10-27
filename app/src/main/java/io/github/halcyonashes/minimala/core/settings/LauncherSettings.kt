@@ -48,4 +48,5 @@ data class LauncherSettings(
      * covered by the palette background, so the wallpaper is not visible at all.
      */
     val backgroundOpacity: Float = 0.45f,
+    val scratchPad: String = "",
 )

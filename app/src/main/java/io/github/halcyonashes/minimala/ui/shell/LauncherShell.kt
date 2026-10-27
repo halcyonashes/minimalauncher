@@ -38,6 +38,7 @@ import io.github.halcyonashes.minimala.ui.drawer.AppDrawer
 import io.github.halcyonashes.minimala.ui.home.HomePanel
 import io.github.halcyonashes.minimala.ui.left.LeftPanel
 import io.github.halcyonashes.minimala.ui.right.RightPanel
+import java.time.LocalDate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -70,6 +71,9 @@ fun LauncherShell(
     onOpenAppInfo: (AppEntry) -> Unit,
     onOpenSettings: () -> Unit,
     onCreateEvent: (String) -> Unit,
+    onSelectWeek: (LocalDate) -> Unit,
+    onClearWeek: () -> Unit,
+    onScratchPadChange: (String) -> Unit,
 ) {
     val palette = LocalLauncherPalette.current
     val context = LocalContext.current
@@ -136,6 +140,11 @@ fun LauncherShell(
                         // the drawer opens: removing a pointer node mid-drag cancels the very
                         // gesture that is opening the drawer, so the drawer never opens at all.
                         enabled = { drawerOffset.value >= heightPx },
+                        // Side panels hold scrollable content (the week's events, the notes
+                        // field). On the Initial pass this detector would take every vertical
+                        // drag before they see it, so there it runs on Main and only claims drags
+                        // no child consumed - a consumed change reports zero positionChange().
+                        pass = if (page == HomePage) PointerEventPass.Initial else PointerEventPass.Main,
                         // Only the home page forwards a swipe-down to the status bar — the
                         // drawer only ever opens from home, so left/right keep swiping down
                         // as a dead gesture rather than surprising the user elsewhere.
@@ -147,9 +156,19 @@ fun LauncherShell(
                     ),
             ) {
                 when (page) {
-                    0 -> LeftPanel(uiState = uiState, onOpenSettings = onOpenSettings)
+                    0 -> LeftPanel(
+                        uiState = uiState,
+                        onOpenSettings = onOpenSettings,
+                        onSelectWeek = onSelectWeek,
+                        onClearWeek = onClearWeek,
+                    )
                     1 -> HomePanel(uiState = uiState, onLaunchApp = onLaunchApp)
-                    2 -> RightPanel(uiState = uiState, onLaunchApp = onLaunchApp, onCreateEvent = onCreateEvent)
+                    2 -> RightPanel(
+                        uiState = uiState,
+                        onLaunchApp = onLaunchApp,
+                        onCreateEvent = onCreateEvent,
+                        onScratchPadChange = onScratchPadChange,
+                    )
                 }
             }
         }

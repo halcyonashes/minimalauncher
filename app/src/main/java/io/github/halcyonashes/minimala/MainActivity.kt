@@ -147,6 +147,9 @@ class MainActivity : ComponentActivity() {
                             onOpenAppInfo = viewModel::openAppInfo,
                             onOpenSettings = { showSettings = true },
                             onCreateEvent = viewModel::createTodayEvent,
+                            onScratchPadChange = viewModel::setScratchPad,
+                            onSelectWeek = viewModel::loadWeekEvents,
+                            onClearWeek = viewModel::clearSelectedWeek,
                         )
                     }
                 }
