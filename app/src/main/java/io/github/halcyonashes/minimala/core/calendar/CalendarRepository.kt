@@ -61,7 +61,9 @@ class CalendarRepository(private val context: Context) {
                         }
                     }
             }
-            events
+            // An invite shared across several synced accounts is stored once per calendar,
+            // so collapse copies that match on what the user actually sees.
+            events.distinctBy { listOf(it.title, it.startMillis, it.endMillis, it.isAllDay) }
         }
 
     fun hasReadPermission(): Boolean =
