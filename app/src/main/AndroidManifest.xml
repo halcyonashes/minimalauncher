@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <uses-permission android:name="android.permission.EXPAND_STATUS_BAR" />
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <!-- Normal (install-time) permission. AOSP-derived clock apps guard the activity that
          handles SHOW_ALARMS with it, so without it startActivity throws SecurityException. -->

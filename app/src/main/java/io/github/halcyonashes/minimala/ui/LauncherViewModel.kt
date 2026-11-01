@@ -116,6 +116,8 @@ class LauncherViewModel(
 
     fun openAppInfo(entry: AppEntry) = appRepository.openAppInfo(entry)
 
+    fun uninstallApp(entry: AppEntry) = appRepository.uninstall(entry)
+
     fun createTodayEvent(title: String) {
         viewModelScope.launch {
             val calendarId = calendarRepository.defaultWritableCalendarId() ?: return@launch
@@ -137,6 +139,11 @@ class LauncherViewModel(
         val current = settings.frequentAppKeys
         val next = if (entry.key in current) current - entry.key else current + entry.key
         settings.copy(frequentAppKeys = next)
+    }
+
+    /** Keys of uninstalled apps aren't in [orderedKeys]; keep them at the end so they return if reinstalled. */
+    fun reorderFrequent(orderedKeys: List<String>) = updateSettings { settings ->
+        settings.copy(frequentAppKeys = orderedKeys + (settings.frequentAppKeys - orderedKeys.toSet()))
     }
 
     fun toggleHidden(entry: AppEntry) = updateSettings { settings ->

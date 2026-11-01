@@ -145,9 +145,11 @@ class MainActivity : ComponentActivity() {
                             onToggleHidden = viewModel::toggleHidden,
                             onRenameApp = viewModel::renameApp,
                             onOpenAppInfo = viewModel::openAppInfo,
+                            onUninstallApp = viewModel::uninstallApp,
                             onOpenSettings = { showSettings = true },
                             onCreateEvent = viewModel::createTodayEvent,
                             onScratchPadChange = viewModel::setScratchPad,
+                            onReorderFrequent = viewModel::reorderFrequent,
                             onSelectWeek = viewModel::loadWeekEvents,
                             onClearWeek = viewModel::clearSelectedWeek,
                         )

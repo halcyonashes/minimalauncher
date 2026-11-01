@@ -23,7 +23,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -31,6 +35,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -57,6 +65,7 @@ fun RightPanel(
     onLaunchApp: (AppEntry) -> Unit,
     onCreateEvent: (title: String) -> Unit = {},
     onScratchPadChange: (String) -> Unit = {},
+    onReorderFrequent: (List<String>) -> Unit = {},
 ) {
     val palette = LocalLauncherPalette.current
     var composingTitle by remember { mutableStateOf<String?>(null) }
@@ -177,20 +186,85 @@ fun RightPanel(
         if (uiState.frequentApps.isNotEmpty()) {
             Spacer(modifier = Modifier.height(PanelSpacing.section))
             SectionLabel("Frequent")
-            Column {
-                uiState.frequentApps.forEach { entry ->
-                    Text(
-                        text = entry.displayLabel(uiState.settings.appRenames),
-                        color = palette.textPrimary,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onLaunchApp(entry) }
-                            .padding(vertical = 10.dp),
-                    )
-                }
+            FrequentList(
+                apps = uiState.frequentApps,
+                renames = uiState.settings.appRenames,
+                onLaunchApp = onLaunchApp,
+                onReorder = onReorderFrequent,
+            )
+        }
+    }
+}
+
+/**
+ * Long-press a row, then drag vertically to move it. The order is kept locally while dragging
+ * and persisted once on drop, so settings aren't rewritten on every swap.
+ */
+@Composable
+private fun FrequentList(
+    apps: List<AppEntry>,
+    renames: Map<String, String>,
+    onLaunchApp: (AppEntry) -> Unit,
+    onReorder: (List<String>) -> Unit,
+) {
+    val palette = LocalLauncherPalette.current
+    var order by remember(apps) { mutableStateOf(apps) }
+    var draggingKey by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    var rowHeight by remember { mutableIntStateOf(0) }
+
+    fun endDrag(commit: Boolean) {
+        if (commit && order != apps) onReorder(order.map { it.key }) else order = apps
+        draggingKey = null
+        dragOffset = 0f
+    }
+
+    // Swap with a neighbour once the row is dragged past half of it; the offset is shifted by
+    // one row so the dragged row stays under the finger after it moves in the list.
+    fun onDrag(deltaY: Float) {
+        dragOffset += deltaY
+        val index = order.indexOfFirst { it.key == draggingKey }
+        val half = rowHeight / 2f
+        val target = when {
+            rowHeight == 0 || index < 0 -> return
+            dragOffset > half && index < order.lastIndex -> index + 1
+            dragOffset < -half && index > 0 -> index - 1
+            else -> return
+        }
+        order = order.toMutableList().apply { add(target, removeAt(index)) }
+        dragOffset += if (target > index) -rowHeight else rowHeight
+    }
+
+    Column {
+        order.forEach { entry ->
+            key(entry.key) {
+                val isDragging = entry.key == draggingKey
+                Text(
+                    text = entry.displayLabel(renames),
+                    color = if (isDragging) palette.accent else palette.textPrimary,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onSizeChanged { rowHeight = it.height }
+                        .zIndex(if (isDragging) 1f else 0f)
+                        .graphicsLayer { translationY = if (isDragging) dragOffset else 0f }
+                        .clickable { onLaunchApp(entry) }
+                        // Inside clickable so it sees events first and consumes the drag/up,
+                        // which stops the long-press release from also launching the app.
+                        // Keyed on apps too: `order` is re-remembered when apps changes, and a
+                        // stale gesture coroutine would keep writing to the old state.
+                        .pointerInput(entry.key, apps) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { draggingKey = entry.key; dragOffset = 0f },
+                                onDrag = { change, amount -> change.consume(); onDrag(amount.y) },
+                                onDragEnd = { endDrag(commit = true) },
+                                onDragCancel = { endDrag(commit = false) },
+                            )
+                        }
+                        .padding(vertical = 10.dp),
+                )
             }
         }
     }

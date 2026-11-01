@@ -1,8 +1,10 @@
 package io.github.halcyonashes.minimala.core.apps
 
 import android.content.Context
+import android.content.Intent
 import android.content.pm.LauncherApps
 import android.graphics.Rect
+import android.net.Uri
 import android.os.UserHandle
 import android.os.UserManager
 import kotlinx.coroutines.CoroutineScope
@@ -18,7 +20,7 @@ import kotlinx.coroutines.launch
  * which is the standard launcher-performance mistake.
  */
 class AppRepository(
-    context: Context,
+    private val context: Context,
     private val scope: CoroutineScope,
 ) {
     private val launcherApps = context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
@@ -74,6 +76,18 @@ class AppRepository(
 
     fun openAppInfo(entry: AppEntry) {
         runCatching { launcherApps.startAppDetailsActivity(entry.componentName, entry.user, null, null) }
+            .onFailure { refresh() }
+    }
+
+    /**
+     * Hands off to the system package installer's confirm dialog. EXTRA_USER targets the
+     * entry's profile so work-profile apps uninstall from the right user (same as Launcher3).
+     */
+    fun uninstall(entry: AppEntry) {
+        val intent = Intent(Intent.ACTION_DELETE, Uri.fromParts("package", entry.componentName.packageName, null))
+            .putExtra(Intent.EXTRA_USER, entry.user)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(intent) }
             .onFailure { refresh() }
     }
 }

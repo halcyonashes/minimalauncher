@@ -69,6 +69,7 @@ fun AppDrawer(
     onToggleHidden: (AppEntry) -> Unit,
     onRename: (AppEntry, String) -> Unit,
     onOpenAppInfo: (AppEntry) -> Unit,
+    onUninstallApp: (AppEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val palette = LocalLauncherPalette.current
@@ -220,6 +221,10 @@ fun AppDrawer(
                             DropdownMenuItem(text = { Text("Hide") }, onClick = {
                                 menuTargetKey = null
                                 onToggleHidden(entry)
+                            })
+                            DropdownMenuItem(text = { Text("Uninstall") }, onClick = {
+                                menuTargetKey = null
+                                onUninstallApp(entry)
                             })
                         }
                     }

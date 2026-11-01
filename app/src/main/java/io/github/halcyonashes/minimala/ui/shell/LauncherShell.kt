@@ -69,11 +69,13 @@ fun LauncherShell(
     onToggleHidden: (AppEntry) -> Unit,
     onRenameApp: (AppEntry, String) -> Unit,
     onOpenAppInfo: (AppEntry) -> Unit,
+    onUninstallApp: (AppEntry) -> Unit,
     onOpenSettings: () -> Unit,
     onCreateEvent: (String) -> Unit,
     onSelectWeek: (LocalDate) -> Unit,
     onClearWeek: () -> Unit,
     onScratchPadChange: (String) -> Unit,
+    onReorderFrequent: (List<String>) -> Unit,
 ) {
     val palette = LocalLauncherPalette.current
     val context = LocalContext.current
@@ -168,6 +170,7 @@ fun LauncherShell(
                         onLaunchApp = onLaunchApp,
                         onCreateEvent = onCreateEvent,
                         onScratchPadChange = onScratchPadChange,
+                        onReorderFrequent = onReorderFrequent,
                     )
                 }
             }
@@ -224,6 +227,7 @@ fun LauncherShell(
                 onToggleHidden = onToggleHidden,
                 onRename = onRenameApp,
                 onOpenAppInfo = onOpenAppInfo,
+                onUninstallApp = onUninstallApp,
             )
         }
     }
