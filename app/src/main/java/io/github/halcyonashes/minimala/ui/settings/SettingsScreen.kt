@@ -19,9 +19,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -35,6 +42,8 @@ import io.github.halcyonashes.minimala.core.settings.LauncherSettings
 import io.github.halcyonashes.minimala.theme.LocalLauncherPalette
 import io.github.halcyonashes.minimala.theme.bundledFonts
 import io.github.halcyonashes.minimala.theme.bundledPalettes
+import io.github.halcyonashes.minimala.theme.paletteById
+import io.github.halcyonashes.minimala.ui.clampDayWindow
 import io.github.halcyonashes.minimala.ui.displayLabel
 
 @Composable
@@ -56,6 +65,22 @@ fun SettingsScreen(
 ) {
     val palette = LocalLauncherPalette.current
 
+    // Sliders drag a local value and persist once on release: persisting from onValueChange
+    // queued a full DataStore write per drag frame, and the thumb only moved once the stored
+    // value came back, so it trailed the finger. Keyed on the stored value so any change that
+    // lands in settings (another writer, or the view model's clamping) re-syncs the thumb.
+    var fontScale by remember(settings.fontScale) { mutableFloatStateOf(settings.fontScale) }
+    var clockScale by remember(settings.clockScale) { mutableFloatStateOf(settings.clockScale) }
+    var backgroundOpacity by remember(settings.backgroundOpacity) {
+        mutableFloatStateOf(settings.backgroundOpacity)
+    }
+    var dayStart by remember(settings.dayStartMinute) {
+        mutableFloatStateOf(settings.dayStartMinute.toFloat())
+    }
+    var dayEnd by remember(settings.dayEndMinute) {
+        mutableFloatStateOf(settings.dayEndMinute.toFloat())
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -71,7 +96,9 @@ fun SettingsScreen(
             color = palette.accent,
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier
-                .clickable(onClick = onBack)
+                // Read as "Back", not "left arrow Back".
+                .semantics { contentDescription = "Back" }
+                .clickable(role = Role.Button, onClick = onBack)
                 .padding(vertical = 8.dp),
         )
 
@@ -94,7 +121,9 @@ fun SettingsScreen(
                             color = if (selected) candidate.accent else palette.divider,
                             shape = CircleShape,
                         )
-                        .clickable { onSelectPalette(candidate.id) },
+                        // A colour swatch has no text, so TalkBack needs the name spelled out.
+                        .semantics { contentDescription = "${candidate.displayName} theme" }
+                        .clickable(role = Role.Button) { onSelectPalette(candidate.id) },
                     contentAlignment = Alignment.Center,
                 ) {
                     if (selected) {
@@ -109,7 +138,9 @@ fun SettingsScreen(
             }
         }
         Text(
-            text = bundledPalettes.first { it.id == settings.paletteId }.displayName,
+            // paletteById, not first{}: an unknown stored id (a palette removed in an update)
+            // would otherwise throw and crash settings; the theme already falls back the same way.
+            text = paletteById(settings.paletteId).displayName,
             color = palette.textSecondary,
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(top = 8.dp),
@@ -147,10 +178,11 @@ fun SettingsScreen(
         }
 
         SectionTitle("Text size")
-        ValueLabel("${(settings.fontScale * 100).toInt()}%")
+        ValueLabel("${(fontScale * 100).toInt()}%")
         Slider(
-            value = settings.fontScale,
-            onValueChange = onFontScaleChange,
+            value = fontScale,
+            onValueChange = { fontScale = it },
+            onValueChangeFinished = { onFontScaleChange(fontScale) },
             valueRange = 0.85f..1.3f,
         )
 
@@ -188,10 +220,11 @@ fun SettingsScreen(
         }
 
         SectionTitle("Clock size")
-        ValueLabel("${(settings.clockScale * 100).toInt()}%")
+        ValueLabel("${(clockScale * 100).toInt()}%")
         Slider(
-            value = settings.clockScale,
-            onValueChange = onClockScaleChange,
+            value = clockScale,
+            onValueChange = { clockScale = it },
+            onValueChangeFinished = { onClockScaleChange(clockScale) },
             valueRange = 0.6f..1.6f,
         )
 
@@ -199,28 +232,40 @@ fun SettingsScreen(
         // Drives the scrim the launcher paints over the wallpaper: 100% is a solid palette
         // background with no wallpaper showing through at all.
         ValueLabel(
-            if (settings.backgroundOpacity >= 1f) {
+            if (backgroundOpacity >= 1f) {
                 "Opaque — wallpaper hidden"
             } else {
-                "${(settings.backgroundOpacity * 100).toInt()}%"
+                "${(backgroundOpacity * 100).toInt()}%"
             },
         )
         Slider(
-            value = settings.backgroundOpacity,
-            onValueChange = onBackgroundOpacityChange,
+            value = backgroundOpacity,
+            onValueChange = { backgroundOpacity = it },
+            onValueChangeFinished = { onBackgroundOpacityChange(backgroundOpacity) },
             valueRange = 0f..1f,
         )
 
         SectionTitle("Day window")
-        ValueLabel("${formatMinutes(settings.dayStartMinute)} – ${formatMinutes(settings.dayEndMinute)}")
+        ValueLabel("${formatMinutes(dayStart.toInt())} – ${formatMinutes(dayEnd.toInt())}")
+        // On release the thumbs snap to the clamped window before persisting. Keying on the
+        // stored value alone is not enough here: a drag the clamp maps back to the value already
+        // stored writes nothing, nothing re-emits, and the thumb would stay where it was dropped.
+        val commitDayWindow: (Int, Int) -> Unit = { start, end ->
+            val (clampedStart, clampedEnd) = clampDayWindow(start, end)
+            dayStart = clampedStart.toFloat()
+            dayEnd = clampedEnd.toFloat()
+            onDayWindowChange(clampedStart, clampedEnd)
+        }
         Slider(
-            value = settings.dayStartMinute.toFloat(),
-            onValueChange = { onDayWindowChange(it.toInt(), settings.dayEndMinute) },
+            value = dayStart,
+            onValueChange = { dayStart = it },
+            onValueChangeFinished = { commitDayWindow(dayStart.toInt(), settings.dayEndMinute) },
             valueRange = 0f..(23 * 60).toFloat(),
         )
         Slider(
-            value = settings.dayEndMinute.toFloat(),
-            onValueChange = { onDayWindowChange(settings.dayStartMinute, it.toInt()) },
+            value = dayEnd,
+            onValueChange = { dayEnd = it },
+            onValueChangeFinished = { commitDayWindow(settings.dayStartMinute, dayEnd.toInt()) },
             valueRange = 0f..(24 * 60).toFloat(),
         )
 

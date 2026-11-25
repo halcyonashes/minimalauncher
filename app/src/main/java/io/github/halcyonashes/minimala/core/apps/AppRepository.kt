@@ -7,12 +7,16 @@ import android.graphics.Rect
 import android.net.Uri
 import android.os.UserHandle
 import android.os.UserManager
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+
+private const val TAG = "AppRepository"
 
 /**
  * Wraps [LauncherApps] to expose the live launchable-app list across all user profiles
@@ -37,8 +41,18 @@ class AppRepository(
         override fun onPackagesUnavailable(packageNames: Array<out String>, user: UserHandle, replacing: Boolean) = refresh()
     }
 
+    /**
+     * Conflated so loads run one at a time: with one launch per package event, an older load
+     * could finish last and overwrite a newer list. A request arriving mid-load queues exactly
+     * one more load, so a burst of events still collapses into at most two.
+     */
+    private val refreshRequests = Channel<Unit>(Channel.CONFLATED)
+
     init {
         launcherApps.registerCallback(callback)
+        scope.launch(Dispatchers.IO) {
+            for (request in refreshRequests) _apps.value = loadAll()
+        }
         refresh()
     }
 
@@ -48,14 +62,20 @@ class AppRepository(
      * Application.onCreate, and the callbacks below fire on the main looper.
      */
     fun refresh() {
-        scope.launch(Dispatchers.IO) {
-            _apps.value = loadAll()
-        }
+        refreshRequests.trySend(Unit)
     }
 
     private fun loadAll(): List<AppEntry> =
         userManager.userProfiles.flatMap { user ->
-            launcherApps.getActivityList(null, user).map { info ->
+            // A profile removed mid-call throws; skip it rather than crash the process, since
+            // the app scope has no exception handler. The removal fires a callback that reloads.
+            val activities = try {
+                launcherApps.getActivityList(null, user)
+            } catch (e: SecurityException) {
+                Log.w(TAG, "Profile $user unavailable while listing apps", e)
+                emptyList()
+            }
+            activities.map { info ->
                 AppEntry(
                     componentName = info.componentName,
                     user = user,

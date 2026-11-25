@@ -17,18 +17,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,10 +41,10 @@ import io.github.halcyonashes.minimala.core.system.turnScreenOff
 import io.github.halcyonashes.minimala.theme.LocalClockTextStyle
 import io.github.halcyonashes.minimala.theme.LocalLauncherPalette
 import io.github.halcyonashes.minimala.ui.LauncherUiState
+import io.github.halcyonashes.minimala.ui.common.rememberCurrentTimeMillis
 import io.github.halcyonashes.minimala.ui.displayLabel
 import io.github.halcyonashes.minimala.ui.startActivitySafely
 import java.util.Calendar
-import kotlinx.coroutines.delay
 
 @Composable
 fun HomePanel(
@@ -57,18 +54,11 @@ fun HomePanel(
     val palette = LocalLauncherPalette.current
     val context = LocalContext.current
 
-    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    var batteryPercent by remember { mutableIntStateOf(readBatteryPercent(context)) }
-
-    // Re-align to each minute boundary rather than ticking on a fixed interval, so the
-    // displayed minute never lags real time by most of an interval.
-    LaunchedEffect(Unit) {
-        while (true) {
-            nowMillis = System.currentTimeMillis()
-            batteryPercent = readBatteryPercent(context)
-            delay(60_000L - (System.currentTimeMillis() % 60_000L))
-        }
-    }
+    // Driven by the system's minute tick and clock/zone change broadcasts plus resume, not a
+    // delay() loop: that stalled in deep sleep and missed manual time, zone and 12/24h changes.
+    val nowMillis = rememberCurrentTimeMillis()
+    // Re-read alongside the clock, which is as often as the old loop did.
+    val batteryPercent = remember(nowMillis) { readBatteryPercent(context) }
 
 
     Column(
@@ -149,7 +139,9 @@ fun HomePanel(
                 .fillMaxWidth(),
             contentAlignment = Alignment.Center,
         ) {
-            Column {
+            // Scrolls once there are more favorites than fit, instead of the extra rows getting
+            // no height and vanishing. Short lists still centre, since the Box above does that.
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 val favoriteStyle = MaterialTheme.typography.titleMedium.let {
                     it.copy(fontSize = it.fontSize * 1.15f, lineHeight = it.lineHeight * 1.15f)
                 }

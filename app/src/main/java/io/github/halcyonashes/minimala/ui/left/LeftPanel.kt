@@ -2,9 +2,12 @@ package io.github.halcyonashes.minimala.ui.left
 
 import android.content.Intent
 import android.provider.Settings
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.indication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -56,20 +60,25 @@ import io.github.halcyonashes.minimala.core.calendar.nepali.toNepaliMonthLabel
 import io.github.halcyonashes.minimala.core.settings.CalendarSystem
 import io.github.halcyonashes.minimala.theme.LocalLauncherPalette
 import io.github.halcyonashes.minimala.ui.LauncherUiState
+import io.github.halcyonashes.minimala.ui.common.CompactTouchTarget
 import io.github.halcyonashes.minimala.ui.common.PanelSpacing
 import io.github.halcyonashes.minimala.ui.common.SectionCard
 import io.github.halcyonashes.minimala.ui.common.SectionLabel
+import io.github.halcyonashes.minimala.ui.common.rememberToday
 import io.github.halcyonashes.minimala.ui.displayLabel
 import io.github.halcyonashes.minimala.ui.startActivitySafely
 import java.text.DateFormat
-import java.text.SimpleDateFormat
+import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
 import java.util.Calendar
 import java.util.Locale
 
 private const val DaysPerWeek = 7
 private const val ShortcutColumns = 4
+private const val MonthsPerYear = 12
 
 /** Day cell diameter. Big enough to read, small enough that six weeks stay compact. */
 private val DayCellSize = 38.dp
@@ -80,6 +89,7 @@ fun LeftPanel(
     onOpenSettings: () -> Unit,
     onSelectWeek: (weekStart: LocalDate) -> Unit,
     onClearWeek: () -> Unit,
+    onSelectMonth: (start: LocalDate, endExclusive: LocalDate) -> Unit,
 ) {
     val context = LocalContext.current
     var selectedDate by remember { mutableStateOf<LocalDate?>(null) }
@@ -119,13 +129,34 @@ fun LeftPanel(
         // one outside the BS table's range (BS 1975..2099). A wrong Nepali month is worse than an
         // honest English one.
         val calendarSystem = uiState.settings.calendarSystem
-        val todayBs = remember(calendarSystem) {
-            if (calendarSystem == CalendarSystem.BS) BikramSambat.fromGregorian(LocalDate.now()) else null
+        // Rolls over at midnight (and on clock/zone changes) while this page stays on screen.
+        val today = rememberToday()
+        val todayBs = remember(calendarSystem, today) {
+            if (calendarSystem == CalendarSystem.BS) BikramSambat.fromGregorian(today) else null
         }
-        val monthLabel = remember(todayBs) {
-            todayBs?.toNepaliMonthLabel()
-                ?: SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Calendar.getInstance().time)
+        // Months away from the current one. Reset when AD/BS flips: the two calendars' months
+        // do not line up, so the same offset would land on a different stretch of days.
+        var monthOffset by remember(calendarSystem) { mutableStateOf(0) }
+        val adMonth = remember(today, monthOffset) { YearMonth.from(today).plusMonths(monthOffset.toLong()) }
+        // Non-null whenever todayBs is: the arrows below refuse to step outside the BS table.
+        val bsMonth = remember(todayBs, monthOffset) { todayBs?.monthStart(monthOffset) }
+        val monthLabel = remember(bsMonth, adMonth) {
+            bsMonth?.toNepaliMonthLabel()
+                ?: adMonth.format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()))
         }
+        // The shown month as a Gregorian day range, so the event dots can be fetched for it.
+        val monthStart = remember(bsMonth, adMonth) { bsMonth?.let(BikramSambat::toGregorian) ?: adMonth.atDay(1) }
+        val monthDays = remember(bsMonth, adMonth) {
+            bsMonth?.let { BikramSambat.daysInMonth(it.year, it.month) } ?: adMonth.lengthOfMonth()
+        }
+        LaunchedEffect(monthStart, monthDays) {
+            onSelectMonth(monthStart, monthStart.plusDays(monthDays.toLong()))
+        }
+        val eventDates = remember(uiState.monthEvents) {
+            uiState.monthEvents.map { it.startMillis.toLocalDate() }.toSet()
+        }
+        val canGoBack = todayBs == null || todayBs.monthStart(monthOffset - 1) != null
+        val canGoForward = todayBs == null || todayBs.monthStart(monthOffset + 1) != null
         val onDayClick: (LocalDate) -> Unit = { selectedDate = it }
         // Keyed on the week start, not the tapped date: a second tap in the same row needs no
         // refetch, and flipping AD/BS (which moves the first weekday) does.
@@ -133,17 +164,30 @@ fun LeftPanel(
         LaunchedEffect(weekStart) {
             if (weekStart != null) onSelectWeek(weekStart) else onClearWeek()
         }
-        SectionLabel(monthLabel, modifier = Modifier.padding(top = PanelSpacing.section))
+        MonthHeader(
+            label = monthLabel,
+            onPrevious = if (canGoBack) ({ monthOffset -= 1 }) else null,
+            onNext = if (canGoForward) ({ monthOffset += 1 }) else null,
+            onReset = if (monthOffset != 0) ({ monthOffset = 0 }) else null,
+            modifier = Modifier.padding(top = PanelSpacing.section),
+        )
         SectionCard {
-            if (todayBs != null) {
+            if (bsMonth != null) {
                 NepaliMonthCalendar(
-                    today = todayBs,
-                    events = uiState.weekEvents,
+                    month = bsMonth,
+                    today = today,
+                    eventDates = eventDates,
                     selectedDate = selectedDate,
                     onDayClick = onDayClick,
                 )
             } else {
-                MonthCalendar(events = uiState.weekEvents, selectedDate = selectedDate, onDayClick = onDayClick)
+                MonthCalendar(
+                    month = adMonth,
+                    today = today,
+                    eventDates = eventDates,
+                    selectedDate = selectedDate,
+                    onDayClick = onDayClick,
+                )
             }
         }
 
@@ -259,6 +303,84 @@ private fun StepsCard(steps: Int, modifier: Modifier = Modifier) {
 }
 
 /**
+ * First day of the BS month [offset] months away from this date's, or null once that leaves
+ * the BS lookup table.
+ */
+private fun BsDate.monthStart(offset: Int): BsDate? {
+    val index = year * MonthsPerYear + (month - 1) + offset
+    return BsDate(index.floorDiv(MonthsPerYear), index.mod(MonthsPerYear) + 1, 1)
+        .takeIf { BikramSambat.daysInMonth(it.year, it.month) != null }
+}
+
+/**
+ * Month title with previous/next arrows. A null callback disables its control; [onReset] is
+ * only set away from the current month, where tapping the title jumps back to it.
+ */
+@Composable
+private fun MonthHeader(
+    label: String,
+    onPrevious: (() -> Unit)?,
+    onNext: (() -> Unit)?,
+    onReset: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        SectionLabel(
+            text = label,
+            modifier = Modifier
+                .weight(1f)
+                .then(
+                    if (onReset != null) {
+                        Modifier.clickable(onClickLabel = "Back to current month", onClick = onReset)
+                    } else {
+                        Modifier
+                    },
+                ),
+        )
+        MonthArrow(glyph = "‹", description = "Previous month", onClick = onPrevious)
+        MonthArrow(
+            glyph = "›",
+            description = "Next month",
+            onClick = onNext,
+            modifier = Modifier.padding(start = 8.dp),
+        )
+    }
+}
+
+/** Same disc as the week list's dismiss button, dimmed when there is no month to step to. */
+@Composable
+private fun MonthArrow(
+    glyph: String,
+    description: String,
+    onClick: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val palette = LocalLauncherPalette.current
+    val enabled = onClick != null
+    CompactTouchTarget(
+        onClick = onClick,
+        description = description,
+        // Same bottom inset as SectionLabel so the two centre on one line.
+        modifier = modifier.padding(bottom = PanelSpacing.label),
+    ) { visual ->
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(palette.accent.copy(alpha = if (enabled) 0.16f else 0.06f))
+                .then(visual),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = glyph,
+                color = palette.accent.copy(alpha = if (enabled) 1f else 0.3f),
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
+    }
+}
+
+/**
  * Bikram Sambat month grid. Same layout rules as [MonthCalendar], but the column a BS month
  * starts in has to be looked up rather than computed: BS month lengths vary year to year, so
  * the 1st is converted back to its Gregorian date and that date's weekday picks the column.
@@ -267,27 +389,19 @@ private fun StepsCard(steps: Int, modifier: Modifier = Modifier) {
  */
 @Composable
 private fun NepaliMonthCalendar(
-    today: BsDate,
-    events: List<CalendarEvent>,
+    month: BsDate,
+    today: LocalDate,
+    eventDates: Set<LocalDate>,
     selectedDate: LocalDate?,
     onDayClick: (LocalDate) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val palette = LocalLauncherPalette.current
 
-    val daysInMonth = remember(today) { BikramSambat.daysInMonth(today.year, today.month) ?: 0 }
-    val leadingBlanks = remember(today) {
-        val first = BikramSambat.toGregorian(BsDate(today.year, today.month, 1))
-        // DayOfWeek.SUNDAY.value is 7; % 7 folds it back to column 0.
-        first?.dayOfWeek?.value?.rem(DaysPerWeek) ?: 0
-    }
-    val eventDays = remember(events, today) {
-        events.mapNotNull { event ->
-            BikramSambat.fromGregorian(event.startMillis.toLocalDate())
-                ?.takeIf { it.year == today.year && it.month == today.month }
-                ?.dayOfMonth
-        }.toSet()
-    }
+    val daysInMonth = remember(month) { BikramSambat.daysInMonth(month.year, month.month) ?: 0 }
+    val first = remember(month) { BikramSambat.toGregorian(BsDate(month.year, month.month, 1)) }
+    // DayOfWeek.SUNDAY.value is 7; % 7 folds it back to column 0.
+    val leadingBlanks = first?.dayOfWeek?.value?.rem(DaysPerWeek) ?: 0
 
     val cells: List<Int?> = List(leadingBlanks) { null } + (1..daysInMonth).toList()
     val paddedCells = cells + List((DaysPerWeek - cells.size % DaysPerWeek) % DaysPerWeek) { null }
@@ -309,11 +423,11 @@ private fun NepaliMonthCalendar(
         paddedCells.chunked(DaysPerWeek).forEach { week ->
             Row(modifier = Modifier.fillMaxWidth()) {
                 week.forEach { day ->
-                    val date = day?.let { BikramSambat.toGregorian(BsDate(today.year, today.month, it)) }
+                    val date = day?.let { first?.plusDays(it - 1L) }
                     DayCell(
                         label = day?.toString()?.toDevanagariDigits(),
-                        isToday = day == today.dayOfMonth,
-                        hasEvent = day != null && day in eventDays,
+                        isToday = date != null && date == today,
+                        hasEvent = date != null && date in eventDates,
                         isSelected = date != null && date == selectedDate,
                         onClick = date?.let { { onDayClick(it) } },
                         modifier = Modifier.weight(1f),
@@ -332,38 +446,27 @@ private fun NepaliMonthCalendar(
 @Composable
 private fun MonthCalendar(
     modifier: Modifier = Modifier,
-    events: List<CalendarEvent>,
+    month: YearMonth,
+    today: LocalDate,
+    eventDates: Set<LocalDate>,
     selectedDate: LocalDate?,
     onDayClick: (LocalDate) -> Unit,
 ) {
     val palette = LocalLauncherPalette.current
 
-    val today = remember { Calendar.getInstance() }
-    val todayDay = today.get(Calendar.DAY_OF_MONTH)
-    val daysInMonth = today.getActualMaximum(Calendar.DAY_OF_MONTH)
-    val leadingBlanks = remember(today) {
-        val first = (today.clone() as Calendar).apply { set(Calendar.DAY_OF_MONTH, 1) }
-        (first.get(Calendar.DAY_OF_WEEK) - first.firstDayOfWeek + DaysPerWeek) % DaysPerWeek
+    val daysInMonth = month.lengthOfMonth()
+    // Same first weekday weekStartOf uses, so a tapped row and its listed week agree.
+    val leadingBlanks = remember(month) {
+        val first = month.atDay(1)
+        (first.toEpochDay() - weekStartOf(first, sundayFirst = false).toEpochDay()).toInt()
     }
-    val weekdayLabels = remember(today) {
-        val fmt = SimpleDateFormat("EEE", Locale.getDefault())
-        val cal = (today.clone() as Calendar).apply { set(Calendar.DAY_OF_WEEK, firstDayOfWeek) }
+    // NARROW, not the first letter of the short name: in Chinese every short name starts with
+    // 周, so all seven headers read the same. Calendar's SUNDAY is 1, hence the minus one.
+    val weekdayLabels = remember {
+        val first = DayOfWeek.SUNDAY.plus(Calendar.getInstance().firstDayOfWeek - 1L)
         List(DaysPerWeek) {
-            fmt.format(cal.time).take(1).also { cal.add(Calendar.DAY_OF_MONTH, 1) }
+            first.plus(it.toLong()).getDisplayName(TextStyle.NARROW, Locale.getDefault())
         }
-    }
-    val eventDays = remember(events) {
-        val cal = Calendar.getInstance()
-        val thisMonth = today.get(Calendar.MONTH)
-        val thisYear = today.get(Calendar.YEAR)
-        events.mapNotNull { event ->
-            cal.timeInMillis = event.startMillis
-            if (cal.get(Calendar.MONTH) == thisMonth && cal.get(Calendar.YEAR) == thisYear) {
-                cal.get(Calendar.DAY_OF_MONTH)
-            } else {
-                null
-            }
-        }.toSet()
     }
 
     // Pad to whole weeks so every row has exactly seven cells and the grid stays aligned.
@@ -387,14 +490,11 @@ private fun MonthCalendar(
         paddedCells.chunked(DaysPerWeek).forEach { week ->
             Row(modifier = Modifier.fillMaxWidth()) {
                 week.forEach { day ->
-                    // Calendar.MONTH is 0-based; LocalDate's month is 1-based.
-                    val date = day?.let {
-                        LocalDate.of(today.get(Calendar.YEAR), today.get(Calendar.MONTH) + 1, it)
-                    }
+                    val date = day?.let(month::atDay)
                     DayCell(
                         label = day?.toString(),
-                        isToday = day == todayDay,
-                        hasEvent = day != null && day in eventDays,
+                        isToday = date != null && date == today,
+                        hasEvent = date != null && date in eventDates,
                         isSelected = date != null && date == selectedDate,
                         onClick = date?.let { { onDayClick(it) } },
                         modifier = Modifier.weight(1f),
@@ -415,8 +515,19 @@ private fun DayCell(
     modifier: Modifier = Modifier,
 ) {
     val palette = LocalLauncherPalette.current
+    val interactionSource = remember { MutableInteractionSource() }
     Box(
-        modifier = modifier.padding(vertical = 3.dp),
+        // The whole weighted cell takes the tap, not just the disc, and is at least a full touch
+        // target tall (5dp above and below the disc, was 3dp). The ripple stays on the disc.
+        modifier = modifier
+            .heightIn(min = PanelSpacing.touchTarget)
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+                } else {
+                    Modifier
+                },
+            ),
         contentAlignment = Alignment.Center,
     ) {
         if (label == null) {
@@ -432,7 +543,7 @@ private fun DayCell(
                 .background(if (isToday) palette.accent else Color.Transparent)
                 // Today is already a filled accent disc, so a ring on it would be invisible.
                 .then(if (isSelected && !isToday) Modifier.border(1.dp, palette.accent, CircleShape) else Modifier)
-                .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+                .indication(interactionSource, LocalIndication.current),
             contentAlignment = Alignment.Center,
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -497,17 +608,22 @@ private fun WeekEventsSection(
                 text = remember(weekStart, bs) { weekLabel(weekStart, bs) },
                 modifier = Modifier.weight(1f),
             )
-            // Same bottom inset as SectionLabel so the two centre on one line.
-            Box(
-                modifier = Modifier
-                    .padding(bottom = PanelSpacing.label)
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(palette.accent.copy(alpha = 0.16f))
-                    .clickable(onClick = onDismiss),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(text = "×", color = palette.accent, style = MaterialTheme.typography.titleMedium)
+            CompactTouchTarget(
+                onClick = onDismiss,
+                description = "Close week",
+                // Same bottom inset as SectionLabel so the two centre on one line.
+                modifier = Modifier.padding(bottom = PanelSpacing.label),
+            ) { visual ->
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(palette.accent.copy(alpha = 0.16f))
+                        .then(visual),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(text = "×", color = palette.accent, style = MaterialTheme.typography.titleMedium)
+                }
             }
         }
         SectionCard {

@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.BackHandler
@@ -30,6 +31,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.halcyonashes.minimala.theme.MinimalaTheme
 import io.github.halcyonashes.minimala.theme.paletteById
+import io.github.halcyonashes.minimala.ui.CreateEventResult
 import io.github.halcyonashes.minimala.ui.LauncherViewModel
 import io.github.halcyonashes.minimala.ui.settings.SettingsScreen
 import io.github.halcyonashes.minimala.ui.shell.LauncherShell
@@ -38,19 +40,19 @@ class MainActivity : ComponentActivity() {
 
     private var homeResetSignal by mutableIntStateOf(0)
 
-    private val requestCalendarPermission = registerForActivityResult(
+    /**
+     * One launch for every permission: Android drops a second request made while the first
+     * dialog is still pending, so separate back-to-back launches lost the step prompt.
+     */
+    private val requestPermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) {
-        // Result is intentionally ignored: the ON_RESUME effect below re-reads the events
-        // either way, and the repository yields an empty list when permission is absent.
-    }
-
-    private val requestActivityRecognitionPermission = registerForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) {
-        // Result is intentionally ignored: StepCounterRepository re-checks the permission on
-        // every sensor registration, so a grant/deny is picked up the next time the flow
-        // collects rather than needing an explicit refresh here.
+        // The grants themselves are not inspected: the ON_RESUME effect below re-reads the
+        // events either way. The repositories are told so their long-lived flows (sensor,
+        // calendar observer), which bailed out without permission, re-check and start.
+        val app = application as MinimalaApp
+        app.calendarRepository.onPermissionResult()
+        app.stepCounterRepository.onPermissionResult()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,13 +67,17 @@ class MainActivity : ComponentActivity() {
             override fun handleOnBackPressed() = Unit
         })
 
-        if (!hasCalendarPermission()) {
-            requestCalendarPermission.launch(
-                arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR),
-            )
+        val missingPermissions = buildList {
+            if (!hasCalendarPermission()) {
+                add(Manifest.permission.READ_CALENDAR)
+                add(Manifest.permission.WRITE_CALENDAR)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !app.stepCounterRepository.hasPermission()) {
+                add(Manifest.permission.ACTIVITY_RECOGNITION)
+            }
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !app.stepCounterRepository.hasPermission()) {
-            requestActivityRecognitionPermission.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+        if (missingPermissions.isNotEmpty()) {
+            requestPermissions.launch(missingPermissions.toTypedArray())
         }
 
         setContent {
@@ -147,11 +153,18 @@ class MainActivity : ComponentActivity() {
                             onOpenAppInfo = viewModel::openAppInfo,
                             onUninstallApp = viewModel::uninstallApp,
                             onOpenSettings = { showSettings = true },
-                            onCreateEvent = viewModel::createTodayEvent,
+                            onCreateEvent = { title ->
+                                // The application context, not the activity: the callback runs
+                                // in viewModelScope and can outlive a recreated activity.
+                                viewModel.createTodayEvent(title) { result ->
+                                    Toast.makeText(app, createEventMessage(result), Toast.LENGTH_SHORT).show()
+                                }
+                            },
                             onScratchPadChange = viewModel::setScratchPad,
                             onReorderFrequent = viewModel::reorderFrequent,
                             onSelectWeek = viewModel::loadWeekEvents,
                             onClearWeek = viewModel::clearSelectedWeek,
+                            onSelectMonth = viewModel::loadMonthEvents,
                         )
                     }
                 }
@@ -169,4 +182,11 @@ class MainActivity : ComponentActivity() {
     private fun hasCalendarPermission(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALENDAR) ==
             PackageManager.PERMISSION_GRANTED
+}
+
+private fun createEventMessage(result: CreateEventResult): String = when (result) {
+    CreateEventResult.Added -> "Event added"
+    CreateEventResult.NoPermission -> "Calendar permission needed"
+    CreateEventResult.NoWritableCalendar -> "No writable calendar"
+    CreateEventResult.Failed -> "Could not add event"
 }

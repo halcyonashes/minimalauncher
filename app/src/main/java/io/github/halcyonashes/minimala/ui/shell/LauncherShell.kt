@@ -14,6 +14,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
@@ -74,6 +75,7 @@ fun LauncherShell(
     onCreateEvent: (String) -> Unit,
     onSelectWeek: (LocalDate) -> Unit,
     onClearWeek: () -> Unit,
+    onSelectMonth: (start: LocalDate, endExclusive: LocalDate) -> Unit,
     onScratchPadChange: (String) -> Unit,
     onReorderFrequent: (List<String>) -> Unit,
 ) {
@@ -95,8 +97,16 @@ fun LauncherShell(
 
         // Single source of truth for drawer position: heightPx = closed, 0 = fully open.
         val drawerOffset = remember { Animatable(Float.MAX_VALUE) }
+        // Height the drawer was last parked at. A closed drawer must follow the screen in both
+        // directions: the activity handles screenSize changes itself, so unfolding a foldable
+        // makes the screen taller without recreating anything, and a drawer left at the old
+        // height would peek up from the bottom. The initial MAX_VALUE counts as closed.
+        val lastHeightPx = remember { mutableFloatStateOf(Float.MAX_VALUE) }
         LaunchedEffect(heightPx) {
-            if (drawerOffset.value > heightPx) drawerOffset.snapTo(heightPx)
+            if (drawerOffset.value >= lastHeightPx.floatValue || drawerOffset.value > heightPx) {
+                drawerOffset.snapTo(heightPx)
+            }
+            lastHeightPx.floatValue = heightPx
         }
 
         val offset = drawerOffset.value.coerceAtMost(heightPx)
@@ -163,6 +173,7 @@ fun LauncherShell(
                         onOpenSettings = onOpenSettings,
                         onSelectWeek = onSelectWeek,
                         onClearWeek = onClearWeek,
+                        onSelectMonth = onSelectMonth,
                     )
                     1 -> HomePanel(uiState = uiState, onLaunchApp = onLaunchApp)
                     2 -> RightPanel(
@@ -182,6 +193,13 @@ fun LauncherShell(
         // pass — the search field, the LazyColumn — lands mid-drag, on the very first pixel of
         // an opening swipe, which is the frame hitch that made opening feel worse than closing
         // (closing only ever translates an already-live subtree, never mounts one).
+        //
+        // Back from a side panel returns home. Registered before the drawer's handler so the
+        // drawer's, registered later, still runs first; the !drawerVisible guard makes the two
+        // mutually exclusive anyway, since the drawer can also be opened over a side panel.
+        BackHandler(enabled = !drawerVisible && pagerState.currentPage != HomePage) {
+            scope.launch { pagerState.animateScrollToPage(HomePage) }
+        }
         BackHandler(enabled = drawerVisible) { settleDrawer(false) }
 
         val dismissConnection = remember(heightPx, density) {
@@ -214,6 +232,9 @@ fun LauncherShell(
                 ),
         ) {
             AppDrawer(
+                // False only once fully closed, not mid-drag: a pull-down that springs back
+                // open must keep the query and keyboard the user was in the middle of using.
+                isOpen = drawerVisible,
                 apps = uiState.visibleApps,
                 renames = uiState.settings.appRenames,
                 favoriteKeys = uiState.settings.favoritePackageKeys.toSet(),

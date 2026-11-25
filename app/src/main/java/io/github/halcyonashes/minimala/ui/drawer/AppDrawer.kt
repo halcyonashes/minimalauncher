@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
@@ -33,10 +34,12 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +47,11 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -59,6 +67,7 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun AppDrawer(
+    isOpen: Boolean,
     apps: List<AppEntry>,
     renames: Map<String, String>,
     favoriteKeys: Set<String>,
@@ -79,11 +88,27 @@ fun AppDrawer(
     var menuTargetKey by remember { mutableStateOf<String?>(null) }
     var renameTargetKey by remember { mutableStateOf<String?>(null) }
     var renameText by remember { mutableStateOf("") }
+    val focusManager = LocalFocusManager.current
+
+    // The drawer stays composed while closed (see LauncherShell), so nothing here is torn
+    // down on its own: without this the keyboard would stay up over home and keep typing into
+    // the hidden field, the old query would still filter the next open, and a HOME press would
+    // leave the menu or rename dialog floating over the home screen.
+    LaunchedEffect(isOpen) {
+        if (!isOpen) {
+            focusManager.clearFocus()
+            query = ""
+            menuTargetKey = null
+            renameTargetKey = null
+        }
+    }
 
     // Search matches the name the user actually sees, so a renamed app is findable by its
-    // new name rather than only by the label the system reports.
+    // new name rather than only by the label the system reports. Re-sorted by that same name:
+    // the list arrives sorted by system label, so a renamed app would otherwise sit under its
+    // old letter and break the letter index below. Same key as AppRepository's sort.
     val labelled = remember(apps, renames) {
-        apps.map { it to it.displayLabel(renames) }
+        apps.map { it to it.displayLabel(renames) }.sortedBy { (_, label) -> label.lowercase() }
     }
     val filtered = remember(labelled, query) {
         if (query.isBlank()) labelled else labelled.filter { (_, label) -> label.contains(query, ignoreCase = true) }
@@ -92,8 +117,8 @@ fun AppDrawer(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    // Maps each letter to the index of the first app under it. Apps are already sorted
-    // alphabetically upstream (AppRepository), so the first match per letter is the group start.
+    // Maps each letter to the index of the first app under it. `labelled` is sorted by the
+    // displayed label, so the first match per letter is the group start.
     val letterIndex = remember(filtered) {
         val map = LinkedHashMap<Char, Int>()
         filtered.forEachIndexed { index, (_, label) ->
@@ -161,7 +186,11 @@ fun AppDrawer(
             )
         }
 
-        Row(modifier = Modifier.fillMaxSize()) {
+        // imePadding shrinks the list (and the scroller beside it) to the space above the
+        // keyboard, so the last results can scroll into view instead of sitting under it. It
+        // only adds what systemBarsPadding above has not already consumed — the navigation-bar
+        // inset is subtracted from the IME inset, never applied twice.
+        Row(modifier = Modifier.fillMaxSize().imePadding()) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier
@@ -285,6 +314,11 @@ private fun AlphabetScroller(
     val palette = LocalLauncherPalette.current
     var itemHeightPx by remember { mutableStateOf(0f) }
     var activeLetter by remember { mutableStateOf<Char?>(null) }
+    // pointerInput is keyed on `letters`, which never changes, so its gesture coroutine lives
+    // for the whole composition. Read through updated state, or it keeps the letter set and
+    // scroll positions from the first composition and jumps to stale rows after any app change.
+    val currentAvailableLetters by rememberUpdatedState(availableLetters)
+    val currentOnLetterSelected by rememberUpdatedState(onLetterSelected)
 
     fun letterAt(y: Float): Char? {
         if (itemHeightPx <= 0f || letters.isEmpty()) return null
@@ -304,7 +338,7 @@ private fun AlphabetScroller(
                     val down = awaitFirstDown()
                     letterAt(down.position.y)?.let { letter ->
                         activeLetter = letter
-                        if (letter in availableLetters) onLetterSelected(letter)
+                        if (letter in currentAvailableLetters) currentOnLetterSelected(letter)
                     }
                     var pressed = true
                     while (pressed) {
@@ -315,13 +349,25 @@ private fun AlphabetScroller(
                             letterAt(change.position.y)?.let { letter ->
                                 if (letter != activeLetter) {
                                     activeLetter = letter
-                                    if (letter in availableLetters) onLetterSelected(letter)
+                                    if (letter in currentAvailableLetters) currentOnLetterSelected(letter)
                                 }
                             }
                             change.consume()
                         }
                     }
                     activeLetter = null
+                }
+            }
+            // The drag gesture is unusable under TalkBack, and 27 one-character text nodes are
+            // just noise, so the column becomes one node whose custom actions jump to each
+            // letter that actually has apps.
+            .clearAndSetSemantics {
+                contentDescription = "Alphabet index"
+                customActions = letters.filter { it in availableLetters }.map { letter ->
+                    CustomAccessibilityAction("Jump to $letter") {
+                        onLetterSelected(letter)
+                        true
+                    }
                 }
             },
         verticalArrangement = Arrangement.SpaceEvenly,
