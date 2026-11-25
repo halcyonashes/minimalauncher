@@ -81,7 +81,10 @@ private val Lemon = LauncherPalette(
     surfaceVariant = Color(0xFFF5EBB8),
     textPrimary = Color(0xFF3A3417),
     textSecondary = Color(0xFF8A7F42),
-    accent = Color(0xFFE0B400),
+    // Dark amber rather than a bright lemon (was 0xFFE0B400, ~1.9:1): accent is drawn as text
+    // on light surfaces and under surface-coloured text, so it must clear 4.5:1 against both
+    // surface (5.1:1) and background (4.8:1). Same ~47° hue, just lower lightness.
+    accent = Color(0xFF876A00),
     accentMuted = Color(0xFFCBBE7A),
     divider = Color(0xFFECE0A0),
 )

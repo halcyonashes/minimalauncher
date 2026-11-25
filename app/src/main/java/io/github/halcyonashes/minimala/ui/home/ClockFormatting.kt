@@ -82,9 +82,12 @@ fun numberToWords(number: Int): String {
     return if (ones == 0) tensWords[tens] else "${tensWords[tens]}-${onesWords[ones]}"
 }
 
-private val englishDateFormat = SimpleDateFormat("EEEE, MMM d", Locale.ENGLISH)
-private val englishWeekdayFormat = SimpleDateFormat("EEEE", Locale.ENGLISH)
-private val japaneseWeekdayFormat = SimpleDateFormat("EEEE", Locale.JAPANESE)
+// Built per call, not held at top level: a SimpleDateFormat copies the default TimeZone when it is
+// constructed, so a cached one kept showing the old zone's date after travel. Once a minute is
+// cheap. The locales stay fixed on purpose — they follow the DateStyle setting, not the system.
+private fun englishDateFormat() = SimpleDateFormat("EEEE, MMM d", Locale.ENGLISH)
+private fun englishWeekdayFormat() = SimpleDateFormat("EEEE", Locale.ENGLISH)
+private fun japaneseWeekdayFormat() = SimpleDateFormat("EEEE", Locale.JAPANESE)
 
 /**
  * Weekday/month order and punctuation vary by style — English reads "Monday, Aug 24", Japanese
@@ -94,19 +97,19 @@ private val japaneseWeekdayFormat = SimpleDateFormat("EEEE", Locale.JAPANESE)
  * setting, not the phone's system locale, since only these styles are supported.
  */
 fun formatDateText(nowMillis: Long, style: DateStyle): String = when (style) {
-    DateStyle.ENGLISH -> englishDateFormat.format(nowMillis)
+    DateStyle.ENGLISH -> englishDateFormat().format(nowMillis)
     DateStyle.JAPANESE -> {
         val cal = Calendar.getInstance().apply { timeInMillis = nowMillis }
         val month = toKanjiNumeral(cal.get(Calendar.MONTH) + 1)
         val day = toKanjiNumeral(cal.get(Calendar.DAY_OF_MONTH))
-        val weekday = japaneseWeekdayFormat.format(nowMillis)
+        val weekday = japaneseWeekdayFormat().format(nowMillis)
         "${month}月${day}日(${weekday})"
     }
     DateStyle.ROMAN_NUMERAL -> {
         val cal = Calendar.getInstance().apply { timeInMillis = nowMillis }
         val month = toRomanNumeral(cal.get(Calendar.MONTH) + 1)
         val day = toRomanNumeral(cal.get(Calendar.DAY_OF_MONTH))
-        val weekday = englishWeekdayFormat.format(nowMillis).uppercase()
+        val weekday = englishWeekdayFormat().format(nowMillis).uppercase()
         "$weekday, $month.$day"
     }
 }

@@ -17,17 +17,25 @@ import io.github.halcyonashes.minimala.core.settings.SettingsRepository
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Calendar
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 private const val MinutesPerDay = 24 * 60
 private const val MinDayWindowMinutes = 60
 private const val DaysInWeek = 7
+private const val CalendarChangeDebounceMillis = 500L
+
+/** Outcome of [LauncherViewModel.createTodayEvent], for user feedback. */
+enum class CreateEventResult { Added, NoPermission, NoWritableCalendar, Failed }
 
 /**
  * [visibleApps] and [favorites] are resolved eagerly when the state is built, not as `get()`
@@ -43,8 +51,20 @@ data class LauncherUiState(
     val weekEvents: List<CalendarEvent> = emptyList(),
     /** Events for the week the user tapped on the left panel's month grid. */
     val selectedWeekEvents: List<CalendarEvent> = emptyList(),
+    /** Events for the month the left panel's grid is showing; drives its event dots. */
+    val monthEvents: List<CalendarEvent> = emptyList(),
     val stepsToday: Int = 0,
 )
+
+/**
+ * Start and end of the day window, clamped so the span is at least [MinDayWindowMinutes].
+ * Shared with the settings UI so the sliders and the stored value follow one rule.
+ */
+internal fun clampDayWindow(startMinute: Int, endMinute: Int): Pair<Int, Int> {
+    val start = startMinute.coerceIn(0, MinutesPerDay - MinDayWindowMinutes)
+    val end = endMinute.coerceIn(start + MinDayWindowMinutes, MinutesPerDay)
+    return start to end
+}
 
 /** Resolves the user's per-app rename, falling back to the system label. */
 fun AppEntry.displayLabel(renames: Map<String, String>): String = renames[key] ?: label
@@ -57,16 +77,37 @@ class LauncherViewModel(
 ) : ViewModel() {
 
     private val _weekEvents = MutableStateFlow<List<CalendarEvent>>(emptyList())
+    private var weekJob: Job? = null
     private val _selectedWeekEvents = MutableStateFlow<List<CalendarEvent>>(emptyList())
     private var selectedWeekJob: Job? = null
+    private var selectedWeekStart: LocalDate? = null
+    private val _monthEvents = MutableStateFlow<List<CalendarEvent>>(emptyList())
+    private var monthJob: Job? = null
+    private var monthRange: Pair<LocalDate, LocalDate>? = null
+
+    /**
+     * The event lists, plus a re-read whenever the calendar provider changes. Living inside
+     * this leg ties the observer to uiState's subscription: it runs only while home is
+     * collected (WhileSubscribed), not for the whole life of the ViewModel. Debounced because a
+     * sync fires a burst of change notifications and each re-read is three provider queries.
+     */
+    @OptIn(FlowPreview::class)
+    private val calendarEvents: Flow<Triple<List<CalendarEvent>, List<CalendarEvent>, List<CalendarEvent>>> = channelFlow {
+        launch {
+            calendarRepository.changes()
+                .debounce(CalendarChangeDebounceMillis)
+                .collect { refreshWeekEvents() }
+        }
+        combine(_weekEvents, _selectedWeekEvents, _monthEvents, ::Triple).collect { send(it) }
+    }
 
     val uiState: StateFlow<LauncherUiState> = combine(
         settingsRepository.settings,
         appRepository.apps,
-        _weekEvents,
-        _selectedWeekEvents,
+        // Grouped because the typed combine overloads stop at five flows.
+        calendarEvents,
         stepCounterRepository.stepsToday(),
-    ) { settings, apps, events, selectedWeekEvents, steps ->
+    ) { settings, apps, (events, selectedWeekEvents, monthEvents), steps ->
         val byKey = apps.associateBy { it.key }
         LauncherUiState(
             settings = settings,
@@ -76,17 +117,27 @@ class LauncherViewModel(
             frequentApps = settings.frequentAppKeys.mapNotNull(byKey::get),
             weekEvents = events,
             selectedWeekEvents = selectedWeekEvents,
+            monthEvents = monthEvents,
             stepsToday = steps,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LauncherUiState())
 
-    /** Safe to call unconditionally — the repository yields an empty list without permission. */
+    /**
+     * Re-reads every range on screen: today's week, the tapped week and the month grid.
+     * Safe to call unconditionally — the repository yields an empty list without permission.
+     */
     fun refreshWeekEvents() {
-        viewModelScope.launch {
-            val start = Calendar.getInstance().apply {
-                set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-            }.timeInMillis
-            val end = start + DaysInWeek * MinutesPerDay * 60 * 1000L
+        monthRange?.let { (start, endExclusive) -> loadMonthEvents(start, endExclusive) }
+        selectedWeekStart?.let { loadWeekEvents(it) }
+        // Cancelled like the others: resume and a provider change can both trigger a re-read,
+        // and an older one must not land last.
+        weekJob?.cancel()
+        weekJob = viewModelScope.launch {
+            val zone = ZoneId.systemDefault()
+            val today = LocalDate.now(zone)
+            // Day arithmetic in LocalDate, not +7×24h millis: a DST week is not 168 hours.
+            val start = today.atStartOfDay(zone).toInstant().toEpochMilli()
+            val end = today.plusDays(DaysInWeek.toLong()).atStartOfDay(zone).toInstant().toEpochMilli()
             _weekEvents.value = calendarRepository.eventsBetween(start, end)
         }
     }
@@ -97,6 +148,7 @@ class LauncherViewModel(
      * overwrite the week the user is actually looking at.
      */
     fun loadWeekEvents(weekStart: LocalDate) {
+        selectedWeekStart = weekStart
         selectedWeekJob?.cancel()
         selectedWeekJob = viewModelScope.launch {
             val zone = ZoneId.systemDefault()
@@ -107,7 +159,24 @@ class LauncherViewModel(
         }
     }
 
+    /**
+     * The range is the caller's because a Bikram Sambat month does not line up with a Gregorian
+     * one. It is remembered so [refreshWeekEvents] can re-read it on resume.
+     */
+    fun loadMonthEvents(start: LocalDate, endExclusive: LocalDate) {
+        monthRange = start to endExclusive
+        monthJob?.cancel()
+        monthJob = viewModelScope.launch {
+            val zone = ZoneId.systemDefault()
+            _monthEvents.value = calendarRepository.eventsBetween(
+                start.atStartOfDay(zone).toInstant().toEpochMilli(),
+                endExclusive.atStartOfDay(zone).toInstant().toEpochMilli(),
+            )
+        }
+    }
+
     fun clearSelectedWeek() {
+        selectedWeekStart = null
         selectedWeekJob?.cancel()
         _selectedWeekEvents.value = emptyList()
     }
@@ -118,13 +187,27 @@ class LauncherViewModel(
 
     fun uninstallApp(entry: AppEntry) = appRepository.uninstall(entry)
 
-    fun createTodayEvent(title: String) {
+    /** [onResult] runs on the main thread, so the caller can show UI feedback directly. */
+    fun createTodayEvent(title: String, onResult: (CreateEventResult) -> Unit = {}) {
         viewModelScope.launch {
-            val calendarId = calendarRepository.defaultWritableCalendarId() ?: return@launch
+            if (!calendarRepository.hasReadPermission() || !calendarRepository.hasWritePermission()) {
+                onResult(CreateEventResult.NoPermission)
+                return@launch
+            }
+            val calendarId = calendarRepository.defaultWritableCalendarId()
+            if (calendarId == null) {
+                onResult(CreateEventResult.NoWritableCalendar)
+                return@launch
+            }
             val start = Calendar.getInstance().apply {
                 set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
             }.timeInMillis
-            calendarRepository.insertEvent(calendarId, title, null, start, start + 60 * 60 * 1000L)
+            val inserted = calendarRepository.insertEvent(calendarId, title, null, start, start + 60 * 60 * 1000L)
+            if (inserted == null) {
+                onResult(CreateEventResult.Failed)
+                return@launch
+            }
+            onResult(CreateEventResult.Added)
             refreshWeekEvents()
         }
     }
@@ -181,11 +264,11 @@ class LauncherViewModel(
      * the day-progress bar's span positive instead of letting the UI hand it a negative window.
      */
     fun setDayWindow(startMinute: Int, endMinute: Int) = updateSettings { settings ->
-        val start = startMinute.coerceIn(0, MinutesPerDay - MinDayWindowMinutes)
-        val end = endMinute.coerceIn(start + MinDayWindowMinutes, MinutesPerDay)
+        val (start, end) = clampDayWindow(startMinute, endMinute)
         settings.copy(dayStartMinute = start, dayEndMinute = end)
     }
 
+    /** Write failures are logged inside [SettingsRepository.update], so this launch cannot crash. */
     private fun updateSettings(transform: (LauncherSettings) -> LauncherSettings) {
         viewModelScope.launch { settingsRepository.update(transform) }
     }
